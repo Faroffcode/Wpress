@@ -1,0 +1,63 @@
+name: Package JAVTEEN Theme and Plugin Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to create/update (example: v1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: javteen-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  package-and-release:
+    name: Build ZIPs and publish GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+
+      - name: Verify package directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f javteen-theme/style.css
+          test -f javteen-theme/functions.php
+          test -f javteen-core/javteen-core.php
+
+      - name: Create installable ZIP packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f javteen-theme.zip javteen-core.zip
+          zip -r javteen-theme.zip javteen-theme \
+            -x 'javteen-theme/.git/*' 'javteen-theme/node_modules/*'
+          zip -r javteen-core.zip javteen-core \
+            -x 'javteen-core/.git/*' 'javteen-core/node_modules/*'
+          unzip -t javteen-theme.zip
+          unzip -t javteen-core.zip
+          ls -lh javteen-theme.zip javteen-core.zip
+
+      - name: Publish release with both ZIPs
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          name: JAVTEEN ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          target_commitish: main
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            javteen-theme.zip
+            javteen-core.zip

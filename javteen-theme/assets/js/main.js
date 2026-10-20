@@ -1,0 +1,1 @@
+(function(){'use strict';var button=document.querySelector('.menu-toggle');var nav=document.querySelector('#primary-navigation');if(!button||!nav){return;}button.addEventListener('click',function(){var expanded=button.getAttribute('aria-expanded')==='true';button.setAttribute('aria-expanded',String(!expanded));nav.classList.toggle('is-open',!expanded);});})();

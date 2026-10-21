@@ -2,7 +2,7 @@
 /**
  * Plugin Name: JAVTEEN AVDB Importer
  * Description: Manually search AVDB metadata, select entries, and import them into JAVTEEN Videos. Playback URLs are never imported automatically.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Requires at least: 6.4
  * Requires PHP: 7.4
  * Author: JAVTEEN
@@ -64,7 +64,7 @@ final class JAVTEEN_AVDB_Importer {
             echo '<input type="hidden" name="action" value="javteen_avdb_import">';
             wp_nonce_field(self::NONCE);
             echo '<p><label><input type="checkbox" id="javteen-avdb-select-all"> Select all results on this page</label></p>';
-            echo '<table class="widefat striped"><thead><tr><th>Select</th><th>Poster</th><th>Title / Code</th><th>Year</th><th>Actors</th><th>Categories</th></tr></thead><tbody>';
+            echo '<table class="widefat striped"><thead><tr><th>Select</th><th>Poster</th><th>Title / Code</th><th>Year</th><th>Actors</th><th>Categories</th><th>Playback source (optional)</th></tr></thead><tbody>';
             foreach ($results as $item) {
                 $id = isset($item['id']) ? absint($item['id']) : 0;
                 if (!$id) { continue; }
@@ -75,11 +75,18 @@ final class JAVTEEN_AVDB_Importer {
                 if ($poster) { echo '<img src="' . esc_url($poster) . '" alt="" loading="lazy" style="width:70px;height:auto;max-height:100px;object-fit:cover">'; }
                 echo '</td><td><strong>' . esc_html($title) . '</strong><br><code>' . esc_html($code) . '</code>';
                 if (self::already_imported($id)) { echo '<br><span style="color:#996800">Already imported (will update)</span>'; }
-                echo '</td><td>' . esc_html(self::text($item, 'year')) . '</td><td>' . esc_html(self::joined($item, 'actor')) . '</td><td>' . esc_html(self::joined($item, 'category')) . '</td></tr>';
+                echo '</td><td>' . esc_html(self::text($item, 'year')) . '</td><td>' . esc_html(self::joined($item, 'actor')) . '</td><td>' . esc_html(self::joined($item, 'category')) . '</td><td>';
+                $embeds = isset($item['embeds']) && is_array($item['embeds']) ? $item['embeds'] : array();
+                if ($embeds) {
+                    echo '<label class="screen-reader-text" for="javteen-avdb-embed-' . esc_attr((string) $id) . '">Playback embed for ' . esc_html($code) . '</label><select id="javteen-avdb-embed-' . esc_attr((string) $id) . '" name="embeds[' . esc_attr((string) $id) . ']" style="max-width:220px"><option value="">Metadata only</option>';
+                    foreach ($embeds as $embed) { echo '<option value="' . esc_attr($embed['url']) . '">' . esc_html($embed['label']) . '</option>'; }
+                    echo '</select>';
+                } else { echo '<span class="description">No embed found</span>'; }
+                echo '</td></tr>';
             }
             echo '</tbody></table>';
             submit_button('Import selected metadata', 'primary');
-            echo '<p class="description">Imported entries are saved as drafts for review. No episode, stream, embed, or playback URL is imported.</p></form>';
+            echo '<p class="description">Imported entries are saved as drafts for review. Choose an embed source only if you are authorized to use it. Leaving “Metadata only” selected will not change playback settings.</p></form>';
             echo '<script>(function(){var a=document.getElementById("javteen-avdb-select-all");if(a){a.addEventListener("change",function(){document.querySelectorAll(".javteen-avdb-select").forEach(function(c){c.checked=a.checked;});});}})();</script>';
         }
         echo '<p><a href="' . esc_url(admin_url('options-general.php?page=javteen-avdb-age-access')) . '">Age-access settings</a></p></div>';
@@ -116,6 +123,7 @@ final class JAVTEEN_AVDB_Importer {
                 'category' => self::array_text($item, 'category'),
                 'poster_url' => self::safe_image_url(isset($item['poster_url']) ? $item['poster_url'] : ''),
                 'description' => isset($item['description']) ? wp_kses_post($item['description']) : '',
+                'embeds' => self::extract_embeds(isset($item['episodes']) ? $item['episodes'] : array()),
             );
         }
         set_transient(self::result_key(), $safe, 10 * MINUTE_IN_SECONDS);
@@ -151,13 +159,44 @@ final class JAVTEEN_AVDB_Importer {
             update_post_meta($post_id, '_javteen_avdb_actors', self::joined($item, 'actor'));
             update_post_meta($post_id, '_javteen_avdb_categories', self::joined($item, 'category'));
             update_post_meta($post_id, '_javteen_avdb_poster_url', self::safe_image_url($item['poster_url']));
-            // Never import episodes or playback fields from the API.
+            $requested_embeds = isset($_POST['embeds']) && is_array($_POST['embeds']) ? wp_unslash($_POST['embeds']) : array();
+            $chosen_embed = isset($requested_embeds[$id]) ? esc_url_raw(trim((string) $requested_embeds[$id]), array('https')) : '';
+            $allowed_embeds = isset($item['embeds']) && is_array($item['embeds']) ? array_column($item['embeds'], 'url') : array();
+            if ($chosen_embed && in_array($chosen_embed, $allowed_embeds, true) && wp_http_validate_url($chosen_embed)) {
+                update_post_meta($post_id, '_javteen_playback_mode', 'embed');
+                update_post_meta($post_id, '_javteen_video_url', $chosen_embed);
+            }
+            // Only an embed explicitly selected by the admin is saved to JAVTEEN Core playback fields.
             if (!get_post_thumbnail_id($post_id) && !empty($item['poster_url'])) { self::sideload_poster($item['poster_url'], $post_id); }
             $count++;
         }
         wp_safe_redirect(self::admin_url_with(array('notice' => $count ? 'imported' : 'error'))); exit;
     }
 
+    /** Extract HTTPS embed links from AVDB's variable episodes/server_data structure. */
+    private static function extract_embeds($episodes) {
+        $found = array();
+        $walk = function($node, $label = '') use (&$walk, &$found) {
+            if (!is_array($node)) { return; }
+            if (isset($node['link_embed']) && is_string($node['link_embed'])) {
+                $url = esc_url_raw($node['link_embed'], array('https'));
+                if ($url && wp_http_validate_url($url) && !isset($found[$url])) {
+                    $found[$url] = array('url' => $url, 'label' => $label !== '' ? $label : 'Embed source');
+                }
+            }
+            $server = isset($node['server_name']) && is_scalar($node['server_name']) ? sanitize_text_field((string) $node['server_name']) : '';
+            foreach ($node as $key => $value) {
+                if ($key === 'link_embed') { continue; }
+                $part = is_string($key) ? sanitize_text_field($key) : '';
+                $next = trim(implode(' — ', array_filter(array($server, $part, $label)));
+                if (is_array($value)) { $walk($value, $next); }
+            }
+        };
+        $walk($episodes);
+        $out = array();
+        foreach ($found as $entry) { $out[] = array('url' => $entry['url'], 'label' => substr($entry['label'], 0, 100)); if (count($out) >= 20) { break; } }
+        return $out;
+    }
     private static function find_imported($api_id) {
         $posts = get_posts(array('post_type' => 'video', 'post_status' => array('publish','draft','pending','private'), 'meta_key' => '_javteen_avdb_id', 'meta_value' => absint($api_id), 'fields' => 'ids', 'numberposts' => 1, 'suppress_filters' => true));
         return $posts ? absint($posts[0]) : 0;

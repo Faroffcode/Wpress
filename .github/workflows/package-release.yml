@@ -54,7 +54,7 @@ jobs:
           unzip -t javteen-avdb-importer.zip
           ls -lh javteen-theme.zip javteen-core.zip javteen-avdb-importer.zip
 
-      - name: Publish release with both ZIPs
+      - name: Publish release with all ZIP packages
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}

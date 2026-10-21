@@ -47,7 +47,7 @@ jobs:
             -x 'javteen-theme/.git/*' 'javteen-theme/node_modules/*'
           zip -r javteen-core.zip javteen-core \
             -x 'javteen-core/.git/*' 'javteen-core/node_modules/*'
-          zip -r javteen-avdb-importer.zip javteen-avdb-importer \\
+          zip -r javteen-avdb-importer.zip javteen-avdb-importer \
             -x 'javteen-avdb-importer/.git/*' 'javteen-avdb-importer/node_modules/*'
           unzip -t javteen-theme.zip
           unzip -t javteen-core.zip

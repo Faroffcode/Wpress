@@ -188,7 +188,7 @@ final class JAVTEEN_AVDB_Importer {
             foreach ($node as $key => $value) {
                 if ($key === 'link_embed') { continue; }
                 $part = is_string($key) ? sanitize_text_field($key) : '';
-                $next = trim(implode(' — ', array_filter(array($server, $part, $label)));
+                $next = trim(implode(' — ', array_filter(array($server, $part, $label))));
                 if (is_array($value)) { $walk($value, $next); }
             }
         };
